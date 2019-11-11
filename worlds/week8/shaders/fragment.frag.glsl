@@ -18,6 +18,9 @@ uniform int uTexIndex;
 uniform sampler2D uTex0;
 uniform sampler2D uTex1;
 uniform sampler2D uTex2;
+uniform sampler2D uTex3;
+uniform sampler2D uTex4;
+uniform sampler2D uTex5;
 
 out vec4 fragColor;    // RESULT WILL GO HERE
 
@@ -25,6 +28,9 @@ void main() {
     vec4 texture0 = texture(uTex0, vUV);
     vec4 texture1 = texture(uTex1, vUV);
     vec4 texture2 = texture(uTex2, vUV);
+    vec4 texture3 = texture(uTex3, vUV);
+    vec4 texture4 = texture(uTex4, vUV);
+    vec4 texture5 = texture(uTex5, vUV);
 
     vec3 ambient = .1 * uColor;
     vec3 diffuse = .5 * uColor;
@@ -51,8 +57,11 @@ void main() {
 
     fragColor = vec4(sqrt(color), 1.0);
     if (uTexIndex == 0) fragColor *= texture0;
-    if (uTexIndex == 1) fragColor *= texture1;
-    if (uTexIndex == 2) fragColor *= texture2;
+    if (uTexIndex == 1) fragColor *= 1.3*texture1;
+    if (uTexIndex == 2) fragColor *= 1.5*texture2;
+    if (uTexIndex == 3) fragColor *= 1.4*texture3;
+    if (uTexIndex == 4) fragColor *= 1.5*texture4;
+    if (uTexIndex == 5) fragColor *= 1.4*texture5;
 }
 
 

@@ -1,5 +1,33 @@
 "use strict"
 
+
+////////////////////////////// USEFUL VECTOR OPERATIONS
+
+let dot = (a, b) => {
+   let value = 0;
+   for (let i = 0 ; i < a.length ; i++)
+      value += a[i] * b[i];
+   return value;
+}
+
+let subtract = (a,b) => {
+   let c = [];
+   for (let i = 0 ; i < a.length ; i++)
+      c.push(a[i] - b[i]);
+   return c;
+}
+
+let normalize = a => {
+   let s = Math.sqrt(dot(a, a)), b = [];
+   for (let i = 0 ; i < a.length ; i++)
+      b.push(a[i] / s);
+   return b;
+}
+
+let cross = (a, b) => [ a[1] * b[2] - a[2] * b[1],
+                        a[2] * b[0] - a[0] * b[2],
+                        a[0] * b[1] - a[1] * b[0] ];
+                        
 ////////////////////////////// MATRIX SUPPORT
 
 let cos = t => Math.cos(t);
@@ -10,6 +38,18 @@ let rotateY = t         => [cos(t),0,-sin(t),0, 0,1,0,0, sin(t),0,cos(t),0, 0,0,
 let rotateZ = t         => [cos(t),sin(t),0,0, -sin(t),cos(t),0,0, 0,0,1,0, 0,0,0,1];
 let scale = (x,y,z)     => [x,0,0,0, 0,y,0,0, 0,0,z,0, 0,0,0,1];
 let translate = (x,y,z) => [1,0,0,0, 0,1,0,0, 0,0,1,0, x,y,z,1];
+let inverse = src => {
+  let dst = [], det = 0, cofactor = (c, r) => {
+     let s = (i, j) => src[c+i & 3 | (r+j & 3) << 2];
+     return (c+r & 1 ? -1 : 1) * ( (s(1,1) * (s(2,2) * s(3,3) - s(3,2) * s(2,3)))
+                                 - (s(2,1) * (s(1,2) * s(3,3) - s(3,2) * s(1,3)))
+                                 + (s(3,1) * (s(1,2) * s(2,3) - s(2,2) * s(1,3))) );
+  }
+  for (let n = 0 ; n < 16 ; n++) dst.push(cofactor(n >> 2, n & 3));
+  for (let n = 0 ; n <  4 ; n++) det += src[n] * dst[n << 2];
+  for (let n = 0 ; n < 16 ; n++) dst[n] /= det;
+  return dst;
+}
 let multiply = (a, b)   => {
    let c = [];
    for (let n = 0 ; n < 16 ; n++)
@@ -19,6 +59,17 @@ let multiply = (a, b)   => {
               a[n&3 | 12] * b[3 | n&12] );
    return c;
 }
+let transpose = m => [ m[0],m[4],m[ 8],m[12],
+                       m[1],m[5],m[ 9],m[13],
+                       m[2],m[6],m[10],m[14],
+                       m[3],m[7],m[11],m[15] ];
+
+let transform = (m, v) => [
+   m[0] * v[0] + m[4] * v[1] + m[ 8] * v[2] + m[12] * v[3],
+   m[1] * v[0] + m[5] * v[1] + m[ 9] * v[2] + m[13] * v[3],
+   m[2] * v[0] + m[6] * v[1] + m[10] * v[2] + m[14] * v[3],
+   m[3] * v[0] + m[7] * v[1] + m[11] * v[2] + m[15] * v[3]
+];
 
 let Matrix = function() {
    let topIndex = 0,
@@ -275,8 +326,12 @@ async function setup(state) {
     hotReloadFile(getPath('week8.js'));
 
     const images = await imgutil.loadImagesPromise([
-       getPath("textures/brick.png"),
-       getPath("textures/tiles.jpg"),
+       getPath("textures/crate.jpg"),
+       getPath("textures/grass-2-large.jpg"),
+       getPath("textures/golf_ball.jpg"),
+       getPath("textures/blood.jpg"),
+       getPath("textures/night_sky.jpg"),
+       getPath("textures/teeth.png")
     ]);
 
     let libSources = await MREditor.loadAndRegisterShaderLibrariesForLiveEditing(gl, "libs", [
@@ -326,6 +381,24 @@ async function setup(state) {
             		   state.uTexLoc[n] = gl.getUniformLocation(program, 'uTex' + n);
                                gl.uniform1i(state.uTexLoc[n], n);
             		}
+                
+                var NL = 2;
+                state.uLightsLoc = [];
+                for (var i = 0; i < NL; i++) {
+                    state.uLightsLoc[i] = {};
+                    state.uLightsLoc[i].src = gl.getUniformLocation(program, 'uLights['+i+'].src');
+                    state.uLightsLoc[i].col = gl.getUniformLocation(program, 'uLights['+i+'].col');
+                }
+
+                var NS = 1;
+                state.uMaterialsLoc = [];
+                for (var i = 0; i < NS; i++) {
+                    state.uMaterialsLoc[i] = {};
+                    state.uMaterialsLoc[i].ambient    = gl.getUniformLocation(program, 'uMaterials['+i+'].ambient');
+                    state.uMaterialsLoc[i].diffuse    = gl.getUniformLocation(program, 'uMaterials['+i+'].diffuse');
+                    state.uMaterialsLoc[i].specular   = gl.getUniformLocation(program, 'uMaterials['+i+'].specular');
+                    state.uMaterialsLoc[i].power      = gl.getUniformLocation(program, 'uMaterials['+i+'].power');
+                }
             } 
         },
         {
@@ -399,6 +472,16 @@ function onStartFrame(t, state) {
 
     gl.enable(gl.DEPTH_TEST);
     gl.enable(gl.CULL_FACE);
+        
+    // camera
+    gl.uniform3fv(state.cameraLoc, [0., 0., 5.]);
+    
+    // Lights
+    gl.uniform3fv(state.uLightsLoc[0].src, [-1.,1.,1.]);
+    gl.uniform3fv(state.uLightsLoc[0].col, [.9,.9,.9]);
+
+    gl.uniform3fv(state.uLightsLoc[1].src, [1.,1.,-2.]);
+    gl.uniform3fv(state.uLightsLoc[1].col, [.4,.4,.4]);
 }
 
 function onDraw(t, projMat, viewMat, state, eyeIdx) {
@@ -416,22 +499,501 @@ function onDraw(t, projMat, viewMat, state, eyeIdx) {
     m.identity();
     m.rotateY(turnAngle);
 
+    // grass
     m.save();
        m.translate(0,-2,0);
        m.scale(6,.01,6);
        drawShape([1,1,1], gl.TRIANGLES, cubeVertices, 1);
     m.restore();
 
-    for (let z = -3 ; z <= 3 ; z += 2)
-    for (let x = -3 ; x <= 3 ; x += 2) {
-       m.save();
-          let y = Math.max(Math.abs(x),Math.abs(z)) / 3 - 1 +
-	          noise.noise(x, 0, 100 * z + state.time / 2) / 5;
-          m.translate(x, y, z);
-          m.scale(.3,.3,.3);
-          drawShape([1,1,1], gl.TRIANGLES, cubeVertices, 0);
-       m.restore();
+    /// crates and lasers
+    m.save();
+      m.translate(0,noise.noise(6, 7, 100 * -1 + state.time / 3) / 7 - 0.1, 0);
+      // crates
+      for (let z = -4 ; z <= 4 ; z += 2)
+      for (let x = -4 ; x <= 4 ; x += 2) {
+         m.save();
+            let y = -1.5;
+            m.translate(x, y, z);
+            m.scale(.3,.3,.3);
+            drawShape([1,1,1], gl.TRIANGLES, cubeVertices, 0);
+         m.restore();
+      }
+      
+      // laser grid
+      for (let x = -4; x <= 4; x += 2) {
+        m.save();
+            let y = -1.5;
+            let z = 0;
+            let c = 0.5*Math.abs(Math.cos(state.time));
+            m.translate(x, y, z);
+            m.rotateY(Math.PI/2);
+            m.scale(4, .01, .01);
+            drawShape([1,c,c], gl.TRIANGLES, cubeVertices);
+         m.restore();
+      }
+      for (let z = -4; z <= 4; z += 2) {
+        m.save();
+            let y = -1.5;
+            let x = 0;
+            let c = 0.5*Math.abs(Math.cos(state.time));
+            m.translate(x, y, z);
+            m.scale(4, .01, .01);
+            drawShape([1,c,c], gl.TRIANGLES, cubeVertices);
+         m.restore();
+      }
+    m.restore();
+    
+    /////// background ///////
+    let z = -.3;
+    let backgroundP = [
+      [
+        -1,-1/3, 1/3, 1,
+        -1,-1/3, 1/3, 1,
+        -1,-1/3, 1/3, 1,
+        -1,-1/3, 1/3, 1
+      ],
+      [
+        -1  ,-1.  ,-1  ,-1,
+        -1/3,-1/3,-1/3,-1/3,
+         1/3, 1/3, 1/3, 1/3,
+         1  , 1  , 1  , 1
+      ],
+      [
+        0,  z,  z,  0,
+        0,  z,  z,  0,
+        0,  z,  z,  0,
+        0,  z,  z,  0
+      ]
+    ];
+    let background = createMeshVertices(16, 16, uvToCubicPatch,
+       toCubicPatchCoefficients(BezierBasisMatrix, backgroundP)
+    );
+    m.save();
+    m.translate(0,0,-4);
+      for (let i = 0; i < 2*Math.PI; i += Math.PI/3){
+        m.save();
+        m.rotateY(i);
+        m.translate(0,0,-10.35);
+        m.scale(6,6,6);
+        gl.uniform3fv(state.uMaterialsLoc[0].ambient , [1,1,1]);
+        gl.uniform3fv(state.uMaterialsLoc[0].diffuse , [.1,.1,.1]);
+        gl.uniform3fv(state.uMaterialsLoc[0].specular, [.1,.1,.1]);
+        gl.uniform1f (state.uMaterialsLoc[0].power   , 15.);
+        drawShape([1,1,1], gl.TRIANGLE_STRIP, background, 4);
+        m.restore();
+      }
+    m.restore();
+    
+    /////// Eye of Cthulhu ///////
+    m.save();
+    m.rotateY(-0.2 * state.time);
+    m.translate(0,noise.noise(6, 7, 100 * -1 + state.time / 3) / 7 - 0.1, -1.2);
+    m.rotateY(-0.1+noise.noise(6, 7, 100 * -2 + state.time / 3) / 7);
+    m.rotateZ(noise.noise(3, 2, 100 * -1 + state.time / 3) / 7);
+    m.scale(.6,.6,.6);
+
+    // helper function
+    let frontToBack = fP => {
+      let bP = [];
+      let flip = M => {
+        let ret = [];
+        for (let i = 0; i < 16; i+=4) {
+          ret[i] = M[12 - i];
+          ret[i+1] = M[13 - i];
+          ret[i+2] = M[14 - i];
+          ret[i+3] = M[15 - i];
+        }
+        return ret;
+      }
+      let reverse = M => {
+        let ret = [];
+        for (let i = 0 ; i < M.length ; i++)
+          ret.push(-M[i]);
+        return ret;
+      }
+      bP = [flip(fP[0]), flip(fP[1]), reverse(flip(fP[2]))];
+      return bP;
     }
+      // eye ball //
+      m.save();
+      let eyeFrontP = [
+         [
+           -1, -1, .2, .5,
+           -1,-.9,-.3,-.1,
+           -1,-.9,-.3,-.1,
+           -1, -1, .2, .5
+         ],
+         [
+            0, -1, -1,-.5,
+            0,-.6,-.5,-.5,
+            0, .6, .5, .5,
+            0,  1,  1, .5
+         ],
+         [
+            0,  0,   0,  0,
+            0,  1, 1.3, .7,
+            0,  1, 1.3, .7,
+            0,  0,   0,  0
+         ]
+      ];
+      let eyeBackP = frontToBack(eyeFrontP);
+      let eyeFront = createMeshVertices(16, 16, uvToCubicPatch,
+         toCubicPatchCoefficients(BezierBasisMatrix, eyeFrontP)
+      );
+      let eyeBack = createMeshVertices(16, 16, uvToCubicPatch,
+         toCubicPatchCoefficients(BezierBasisMatrix, eyeBackP)
+      );
+
+      m.scale(.6,.6,.6);
+      gl.uniform3fv(state.uMaterialsLoc[0].ambient , [.6,.6,.6]);
+      gl.uniform3fv(state.uMaterialsLoc[0].diffuse , [.9,.9,.9]);
+      gl.uniform3fv(state.uMaterialsLoc[0].specular, [.8,.8,.8]);
+      gl.uniform1f (state.uMaterialsLoc[0].power   , 2.);
+      drawShape([1,1,1], gl.TRIANGLE_STRIP, eyeFront, 2);
+      drawShape([1,1,1], gl.TRIANGLE_STRIP, eyeBack, 2);
+      
+      // mouth //
+      let mouthFrontP = [
+         [
+          .07, .1, .3, .5,
+          .07,  0,-.1,-.4,
+          .07,  0,-.1,-.4,
+          .07, .1, .3, .5
+         ],
+         [
+           0,-.3,-.5,-.5,
+           0,-.3,-.5,-.5,
+           0, .3, .5, .5,
+           0, .3, .5, .5
+         ],
+         [
+          .54, .54, .3,  0,
+          .54, .54, .3,  0,
+          .54, .54, .3,  0,
+          .54, .54, .3,  0
+         ]
+      ];
+      let mouthBackP = frontToBack(mouthFrontP);
+      let mouthFront = createMeshVertices(16, 16, uvToCubicPatch,
+         toCubicPatchCoefficients(BezierBasisMatrix, mouthFrontP)
+      );
+      let mouthBack = createMeshVertices(16, 16, uvToCubicPatch,
+         toCubicPatchCoefficients(BezierBasisMatrix, mouthBackP)
+      );
+
+      let mouthColor = [.8,.07,.08]
+      gl.uniform3fv(state.uMaterialsLoc[0].ambient , [.16,.007,.008]);
+      gl.uniform3fv(state.uMaterialsLoc[0].diffuse , [.4,.035,.04]);
+      gl.uniform3fv(state.uMaterialsLoc[0].specular, [.6,.6,.6]);
+      gl.uniform1f (state.uMaterialsLoc[0].power   , 30.);
+      drawShape(mouthColor, gl.TRIANGLE_STRIP, mouthFront);
+      drawShape(mouthColor, gl.TRIANGLE_STRIP, mouthBack);
+      m.restore();
+    
+      // tooth //
+      let toothFrontP = [
+         [
+           0, 0, 0, 0,
+           -.05,-.05/3,.05/3, .05,
+           -.1,-.1/3,.1/3, .1,
+           -.15, -.05, .05, .15
+         ],
+         [
+           -1, -1, -1, -1,
+          -1/3,-1/3,-1/3,-1/3,
+           1/3, 1/3, 1/3, 1/3,
+            1,  1,  1,  1
+         ],
+         [
+            0,  0,   0,  0,
+            0, .2/3,.2/3,  0,
+            0, .4/3,.4/3,  0,
+            0, .2,  .2,  0
+         ]
+      ];
+      let toothBackP = frontToBack(toothFrontP);
+      let toothFront = createMeshVertices(16, 16, uvToCubicPatch,
+         toCubicPatchCoefficients(BezierBasisMatrix, toothFrontP)
+      );
+      let toothBack = createMeshVertices(16, 16, uvToCubicPatch,
+         toCubicPatchCoefficients(BezierBasisMatrix, toothBackP)
+      );
+      
+      let toothColor = [.48, .43, .35];
+      gl.uniform3fv(state.uMaterialsLoc[0].ambient , [.09,.065,.025]);
+      gl.uniform3fv(state.uMaterialsLoc[0].diffuse , [.18, .13, .05]);
+      gl.uniform3fv(state.uMaterialsLoc[0].specular, [.6,.6,.6]);
+      gl.uniform1f (state.uMaterialsLoc[0].power   , 3.);
+      for (let updown = -1; updown <= 1; updown += 2) {
+        m.save();
+        m.translate(.27,updown*.21,0);
+        m.rotateZ(updown == -1 ? (Math.PI - 0.43) : 0.43);
+        m.scale(.2,.09,.2);
+        drawShape(toothColor, gl.TRIANGLE_STRIP, toothFront, 5);
+        drawShape(toothColor, gl.TRIANGLE_STRIP, toothBack, 5);
+        m.restore();
+        for (let side = -1; side <= 1; side += 2) {
+          m.save();
+          m.translate(.18,updown*.2,side * 0.1);
+          m.rotateZ(updown == -1 ? (Math.PI - 0.45) : 0.45);
+          m.scale(.2,.1,.2);
+          drawShape(toothColor, gl.TRIANGLE_STRIP, toothFront, 5);
+          drawShape(toothColor, gl.TRIANGLE_STRIP, toothBack, 5);
+          m.restore();
+          m.save();
+          m.translate(.11,updown*.14,side * 0.18);
+          m.rotateZ(updown == -1 ? (Math.PI - 0.5) : 0.5);
+          m.scale(.2,.1,.2);
+          drawShape(toothColor, gl.TRIANGLE_STRIP, toothFront, 5);
+          drawShape(toothColor, gl.TRIANGLE_STRIP, toothBack, 5);
+          m.restore();
+          m.save();
+          m.translate(.06,updown*.06,side * 0.26);
+          m.rotateZ(updown == -1 ? (Math.PI - 0.6) : 0.6);
+          m.scale(.2,.05,.2);
+          drawShape(toothColor, gl.TRIANGLE_STRIP, toothFront, 5);
+          drawShape(toothColor, gl.TRIANGLE_STRIP, toothBack, 5);
+          m.restore();
+        }
+      }
+      
+      
+      /// blood vines and tails
+      let bloodVineColor = [.5, .02, .03];
+      let bloodVinesAndTailsPFrontToBack = fP => {
+        let bP = [];
+        let reverseX = X => {
+          let ret = [];
+          for (let i = 0; i < X.length; i++) {
+            ret.push(-X[i]);
+          }
+          return ret;
+        }
+        bP.push(reverseX(fP[0]));
+        bP.push(fP[1]);
+        bP.push(fP[2]);
+        return bP;
+      }
+      
+      // blood vines //
+      let bloodVinesFrontP = [];
+      bloodVinesFrontP[0] = [
+        [ -.6, -.5, 0,  0.09], // A.x B.x C.x D.x
+        [  0,  .2,  0,  0.2], // A.y B.y C.y D.y
+        [  0,  .6, .5, .25]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[1] = [
+        [ -.58, -.5, 0,  0.03], // A.x B.x C.x D.x
+        [ -.2,  -.2,  0, -0.05], // A.y B.y C.y D.y
+        [  0,  .55, .55, .31]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[2] = [
+                  [ -.45,-.4, -.2,  0], // A.x B.x C.x D.x
+                  [ -.4, -.4, -.3, -0.3], // A.y B.y C.y D.y
+                  [   0,  .25, .45, .28]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[3] = [
+                  [ -.23,-.1, -.15,  0.2], // A.x B.x C.x D.x
+                  [ -.43,-.4, -.45, -0.27], // A.y B.y C.y D.y
+                  [  .15, .2, .3, .18]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[4] = [
+                  [ -.41,-.26, -.15,0.2], // A.x B.x C.x D.x
+                  [ .35,.4, .45, 0.27], // A.y B.y C.y D.y
+                  [  .15, .2, .3, .18]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[5] = [
+                  [-.1,-.08, -.06, 0], // A.x B.x C.x D.x
+                  [ .1, .15,.1, .2], // A.y B.y C.y D.y
+                  [ .43, .43, .4, .35]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[6] = [
+                  [-.3,-.25, -.2, -.15], // A.x B.x C.x D.x
+                  [ .1, .17,.2, .2], // A.y B.y C.y D.y
+                  [ .43, .41, .42, .4]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[7] = [
+                  [-.2,-.17, -.15, -.05], // A.x B.x C.x D.x
+                  [ .1, .05,-.05, -.0], // A.y B.y C.y D.y
+                  [ .45, .47, .46, .42]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[8] = [
+                  [-.43,-.25, -.2, -.13], // A.x B.x C.x D.x
+                  [-.16, 0,.05, -.005], // A.y B.y C.y D.y
+                  [ .35, .5, .46, .45]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[9] = [
+                  [-.3, -.25, -.2, -.13], // A.x B.x C.x D.x
+                  [-.12,-.18,-.24, -.24], // A.y B.y C.y D.y
+                  [ .43, .41, .4, .39]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[10] = [
+                  [-.13, -.13, -.1, -.03], // A.x B.x C.x D.x
+                  [-.06,-.06,-.13, -.14], // A.y B.y C.y D.y
+                  [ .45, .45, .45, .39]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[11] = [
+                  [-.45, -.23, -.1, .08], // A.x B.x C.x D.x
+                  [-.4,-.45,-.46, -.18], // A.y B.y C.y D.y
+                  [ 0, .22, .3, .3]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[12] = [
+                  [-.35, -.3, -.25, -.25], // A.x B.x C.x D.x
+                  [-.37,-.25,-.24, -.24], // A.y B.y C.y D.y
+                  [ .22, .35, .4, .35]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[13] = [
+                  [.03,.03, .02, .02], // A.x B.x C.x D.x
+                  [ -.27, -.25,-.15, -.15], // A.y B.y C.y D.y
+                  [ .25, .34, .33, .35]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[14] = [
+                  [-.5,-.4, -.2, -.15], // A.x B.x C.x D.x
+                  [ .2, .2,.37, .3], // A.y B.y C.y D.y
+                  [ .23, .35, .33, .34]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[15] = [
+                  [-.15,-.05, .05, .1], // A.x B.x C.x D.x
+                  [ .3, .2,.2, .31], // A.y B.y C.y D.y
+                  [ .34, .4, .4,.21]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[16] = [
+                  [-.4,-.36, -.3, -.3], // A.x B.x C.x D.x
+                  [ .23, .3,.321, .35], // A.y B.y C.y D.y
+                  [ .3, .29, .28, .25]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[17] = [
+                  [-.43,-.36, -.3, -.3], // A.x B.x C.x D.x
+                  [ .22, .18,.18, .14], // A.y B.y C.y D.y
+                  [ .28, .37, .41, .41]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[18] = [
+                  [-.25,-.2,-.1,-.1], // A.x B.x C.x D.x
+                  [ .4, .44, .5, .5], // A.y B.y C.y D.y
+                  [ .2, .15,.04,  0]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[19] = [
+                  [   0, .1, .2,  .25], // A.x B.x C.x D.x
+                  [ .36, .4, .4,  .35], // A.y B.y C.y D.y
+                  [ .23, .13,.04, .02]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[20] = [
+                  [   0, .1, .2,  .25], // A.x B.x C.x D.x
+                  [-.36,-.4,-.4, -.35], // A.y B.y C.y D.y
+                  [ .23, .13,.04, .02]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[21] = [
+                  [ -.2, -.1, 0,  .05], // A.x B.x C.x D.x
+                  [-.42,-.5,-.5, -.47], // A.y B.y C.y D.y
+                  [ .18, .05,.04, .02]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[22] = [
+                  [ -.5, -.4,-.34, -.34], // A.x B.x C.x D.x
+                  [ .08,   0,  0, -.05], // A.y B.y C.y D.y
+                  [ .3, .38, .45,  .4]  // A.z B.z C.z D.z
+      ];
+      bloodVinesFrontP[23] = [
+                  [-.15, -.1,-.05,  .1], // A.x B.x C.x D.x
+                  [ .44, .42, .42, .46], // A.y B.y C.y D.y
+                  [ .14, .18,  .2, .01]  // A.z B.z C.z D.z
+      ];
+      
+      gl.uniform3fv(state.uMaterialsLoc[0].ambient , [.25, .01, .015]);
+      gl.uniform3fv(state.uMaterialsLoc[0].diffuse , [.5, .02, .03]);
+      gl.uniform3fv(state.uMaterialsLoc[0].specular, [.6,.6,.6]);
+      gl.uniform1f (state.uMaterialsLoc[0].power   , 10.);
+      m.save();
+      let bloodVinesFront = [];
+      let bloodVinesBack = [];
+      for (let i = 0; i < bloodVinesFrontP.length; i++) {
+        m.save();
+        bloodVinesFront[i] = createMeshVertices(16, 2, uvToCubicCurvesRibbon,
+          {
+            width: i <= 4 ? 0.02 : 0.01,
+            data: [
+               toCubicCurveCoefficients(BezierBasisMatrix, bloodVinesFrontP[i])
+            ]
+          }
+        );
+        drawShape(bloodVineColor, gl.TRIANGLE_STRIP, bloodVinesFront[i], 3);
+        m.restore();
+        m.save();
+        m.rotateY(Math.PI);
+        bloodVinesBack[i] = createMeshVertices(16, 2, uvToCubicCurvesRibbon,
+          {
+            width: i <= 4 ? 0.02 : 0.01,
+            data: [
+               toCubicCurveCoefficients(BezierBasisMatrix, bloodVinesAndTailsPFrontToBack(bloodVinesFrontP[i]))
+            ]
+          }
+        );
+        drawShape(bloodVineColor, gl.TRIANGLE_STRIP, bloodVinesBack[i], 3);
+        m.restore();
+      }
+      m.restore();
+      
+      // tails //
+      let tailsFrontP = [];
+      let c = Math.cos(7 * state.time);
+      let s = c > .5 ? .8 : (c < -.5 ? -.4 : .4);
+      tailsFrontP[0] = [
+        [-.53,  -.62,  -.65,  -.7], // A.x B.x C.x D.x
+        [   0, .05*s, .05*s,    0], // A.y B.y C.y D.y
+        [   0,     0,     0,    0]  // A.z B.z C.z D.z
+      ];
+      tailsFrontP[1] = [
+        [ -.7,  -.75,  -.75, -.85], // A.x B.x C.x D.x
+        [   0,-.05*s,  .1*s,    0], // A.y B.y C.y D.y
+        [   0,     0,     0,    0]  // A.z B.z C.z D.z
+      ];
+      tailsFrontP[2] = [
+        [-.85,  -.95,  -.95,   -1], // A.x B.x C.x D.x
+        [   0, -.1*s,  .1*s,.05*s], // A.y B.y C.y D.y
+        [   0,     0,     0,    0]  // A.z B.z C.z D.z
+      ];
+      tailsFrontP[3] = [
+        [-.53,  -.62,  -.65,  -.7], // A.x B.x C.x D.x
+        [ .18, .18-.05*s,  .18-.05*s,  .18+.05*s], // A.y B.y C.y D.y
+        [  0,      0,     0,    0]  // A.z B.z C.z D.z
+      ];
+      
+      let tailColor = bloodVineColor;
+      for (let theta = - Math.PI/3; theta < Math.PI/3; theta += Math.PI/7) {
+        m.save();
+        m.rotateZ(theta);
+        m.translate(0, -0.14, 0);
+        let tailsFront = [];
+        let tailsBack = [];
+        for (let i = 0; i < tailsFrontP.length; i++) {
+          m.save();
+          tailsFront[i] = createMeshVertices(16, 2, uvToCubicCurvesRibbon,
+            {
+              width: i <= 2 ? 0.03 : 0.025,
+              data: [
+                 toCubicCurveCoefficients(BezierBasisMatrix, tailsFrontP[i])
+              ]
+            }
+          );
+          drawShape(tailColor, gl.TRIANGLE_STRIP, tailsFront[i], 3);
+          m.restore();
+          m.save();
+          m.rotateY(Math.PI);
+          tailsBack[i] = createMeshVertices(16, 2, uvToCubicCurvesRibbon,
+            {
+              width: i <= 2 ? 0.03 : 0.025,
+              data: [
+                 toCubicCurveCoefficients(BezierBasisMatrix, bloodVinesAndTailsPFrontToBack(tailsFrontP[i]))
+              ]
+            }
+          );
+          drawShape(tailColor, gl.TRIANGLE_STRIP, tailsBack[i], 3);
+          m.restore();
+        }
+        m.restore();
+      }
+      
+    m.restore();
 }
 
 function onEndFrame(t, state) {}
